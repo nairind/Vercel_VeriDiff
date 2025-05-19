@@ -1,7 +1,8 @@
+// Updated compare.js for Vercel API routes with proper file upload handling
 import formidable from 'formidable';
-import fs from 'fs';
-import { parse } from 'csv-parse/sync';
+import { promises as fs } from 'fs';
 
+// Configure for Vercel serverless functions
 export const config = {
   api: {
     bodyParser: false,
@@ -10,23 +11,26 @@ export const config = {
 
 export default async function handler(req, res) {
   // Set CORS headers
+  res.setHeader('Access-Control-Allow-Credentials', true);
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
+  res.setHeader('Access-Control-Allow-Headers', 'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version');
 
-  // Handle preflight OPTIONS request
+  // Handle OPTIONS request for CORS preflight
   if (req.method === 'OPTIONS') {
-    return res.status(200).json({ message: 'CORS preflight successful' });
+    return res.status(200).end();
   }
 
+  // Only allow POST method
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
   try {
-    const form = formidable({ multiples: true });
+    // Parse form with formidable
+    const form = new formidable.IncomingForm();
+    form.keepExtensions = true;
     
-    // Parse the form data
     const [fields, files] = await new Promise((resolve, reject) => {
       form.parse(req, (err, fields, files) => {
         if (err) reject(err);
@@ -34,57 +38,51 @@ export default async function handler(req, res) {
       });
     });
 
-    // In a real implementation, we would process the files here
-    // For this example, we'll return mock comparison results
+    // Check if both files were uploaded
+    if (!files.file1 || !files.file2) {
+      return res.status(400).json({ error: 'Please upload both files' });
+    }
+
+    // Read file contents
+    const file1Content = await fs.readFile(files.file1.filepath, 'utf8');
+    const file2Content = await fs.readFile(files.file2.filepath, 'utf8');
+
+    // Simple comparison (can be enhanced for different file types)
+    const file1Lines = file1Content.split('\n');
+    const file2Lines = file2Content.split('\n');
     
-    // Mock comparison results
-    const results = {
-      total_records: 5,
-      differences_found: 3,
-      within_tolerance: 0,
-      potential_numeric_columns: ["Amount", "Quantity", "Price", "Total"],
-      results: [
-        {
-          ID: "1",
-          COLUMN: "Amount",
-          SOURCE_1_VALUE: "1000",
-          SOURCE_2_VALUE: "1000",
-          STATUS: "match"
-        },
-        {
-          ID: "2",
-          COLUMN: "Amount",
-          SOURCE_1_VALUE: "2000",
-          SOURCE_2_VALUE: "2100",
-          STATUS: "difference"
-        },
-        {
-          ID: "3",
-          COLUMN: "Price",
-          SOURCE_1_VALUE: "50.00",
-          SOURCE_2_VALUE: "55.00",
-          STATUS: "difference"
-        },
-        {
-          ID: "4",
-          COLUMN: "Quantity",
-          SOURCE_1_VALUE: "10",
-          SOURCE_2_VALUE: "12",
-          STATUS: "difference"
-        },
-        {
-          ID: "5",
-          COLUMN: "Total",
-          SOURCE_1_VALUE: "500",
-          SOURCE_2_VALUE: "500",
-          STATUS: "match"
-        }
-      ]
+    // Compare line by line
+    const comparison = {
+      file1Name: files.file1.originalFilename,
+      file2Name: files.file2.originalFilename,
+      file1Lines: file1Lines.length,
+      file2Lines: file2Lines.length,
+      differences: []
     };
 
-    return res.status(200).json({ results });
+    const maxLines = Math.max(file1Lines.length, file2Lines.length);
+    
+    for (let i = 0; i < maxLines; i++) {
+      const line1 = i < file1Lines.length ? file1Lines[i] : null;
+      const line2 = i < file2Lines.length ? file2Lines[i] : null;
+      
+      if (line1 !== line2) {
+        comparison.differences.push({
+          lineNumber: i + 1,
+          file1: line1,
+          file2: line2
+        });
+      }
+    }
+
+    // Return comparison results
+    return res.status(200).json({
+      success: true,
+      comparison
+    });
+    
   } catch (error) {
-    console.error('Error processing files:', error);
+    console.error('Error comparing files:', error);
     return res.status(500).json({ error: 'Failed to compare files', details: error.message });
   }
 }
